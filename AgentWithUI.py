@@ -7,6 +7,7 @@ import pandas as pd
 from langchain_openai import ChatOpenAI
 from crewai.tools import BaseTool
 
+os.environ["nonOPEN"] = ""
 llm = ChatOpenAI(
             model="gpt-4o-mini",
             temperature=0.7,
@@ -86,7 +87,7 @@ ticket_writer_tool = TicketWriterTool()
 #finance_tool = YahooFinanceTool()
 
 csv_read_task = Task(
-    description="read either the support_emails.csv or the app_feedback.csv file, and return 3 records.",
+    description="read the {input_file} file, and return records between {start_rec_no} and {end_rec_no}.",
     expected_output="JSON formatted records.",
     agent=csv_reader_agent,
     tools=[csv_reader_tool]
@@ -111,7 +112,7 @@ feature_extractor_task = Task(
 )
 
 ticket_creator_task = Task(
-    description="Generates structured tickets and logs them to output CSV files.",
+    description="Generates structured tickets and logs them to output CSV file named {out_file}.",
     expected_output="A list containing the ticket information.",
     agent=ticket_creactor_agent,
     tools=[ticket_writer_tool]
@@ -190,15 +191,15 @@ with col1:
             verbose=False  # Set to False to reduce rich console output and avoid RecursionError
             )
 
-#            inputs = {
-#                'topic': topic_input,
-#                'location': location_input,
-#                'meal_periods': ', '.join(meal_periods_input),
-#                'current_year': str(current_year)
-#            }
+            input_params = {
+                'input_file': selected_type,
+                'start_rec_no': start_rec_no,
+                'end_rec_no': end_rec_no,
+                'out_file': str(output_file_name)
+            }
 #            result = FoodCatalyst().crew().kickoff(inputs=inputs)
 
-            result = crew.kickoff()
+            result = crew.kickoff(inputs=input_params)
             print("\n📊 Ticket Creation Report:\n")
             print(result)
 
