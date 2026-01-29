@@ -7,7 +7,7 @@ import pandas as pd
 from langchain_openai import ChatOpenAI
 from crewai.tools import BaseTool
 
-os.environ["nonOPEN"] = ""
+os.environ["OPENAI_API_KEY"] = ""
 llm = ChatOpenAI(
             model="gpt-4o-mini",
             temperature=0.7,
@@ -24,9 +24,9 @@ class CSVReaderTool(BaseTool):
 class TicketWriterTool(BaseTool):
     name: str = "TicketWriterTool"
     description: str = "write the ticket details received in json format into a csv file after converting it into a dataframe"
-    def _run(self, json_tkt: str):
+    def _run(self, json_tkt: str, out_file: str):
         df = pd.read_json(json_tkt)
-        df.to_csv("tickets.csv")
+        df.to_csv(out_file)
 
 csv_reader_agent = Agent(
     role='Read CSV data',
@@ -38,10 +38,10 @@ csv_reader_agent = Agent(
 )
 
 feedback_classifier_agent = Agent(
-    role='Classify feedback into one of the categories: bug, feature request, praise, complaint and spam data',
-    goal='Categorize feedback into given categories',
+    role='Classify feedback into one of the five categories: bug, feature request, praise, complaint and spam along with confidence_score for the identified class',
+    goal='Categorize feedback into given categories and identify confidence_score',
     backstory='Expert in understanding customer issues from their feedback and categorizing those',
-    verbose=True,  # Keep agent verbose for debugging, we'll adjust Crew verbose
+    verbose=True,
     allow_delegation=False,
     llm=llm
 )
@@ -50,7 +50,7 @@ bug_analysis_agent = Agent(
     role='Extract technical details: steps to reproduce, platform info, severity assessment - and output those in json format',
     goal='Extract technical details from feedback text provided it is classified as a bug',
     backstory='Expert in finding technical details from customer feedback',
-    verbose=True,  # Keep agent verbose for debugging, we'll adjust Crew verbose
+    verbose=True,
     allow_delegation=False,
     llm=llm
 )
@@ -59,16 +59,16 @@ feature_extractor_agent = Agent(
     role='Identifies new feature requests and estimates user impact/demand from user feedback - and output those in json format',
     goal='Identify new feature requests from feedback text provided the feedback is classified as feature request',
     backstory='Expert in identifying feature requests from customer feedback',
-    verbose=True,  # Keep agent verbose for debugging, we'll adjust Crew verbose
+    verbose=True,
     allow_delegation=False,
     llm=llm
 )
 
 ticket_creactor_agent = Agent(
-    role='Creates a list output containing the source_id, source_type, category, priority, technical_details and suggested_title using the outputs from other agents',
-    goal='Create ticket details from feedback text',
+    role='Creates a list output containing the source_id, source_type, category, priority, technical_details, suggested_title and confidence_score using the outputs from other agents',
+    goal='Create ticket details from feedback text and write those into {out_file}',
     backstory='Expert in creating ticket details from customer feedback',
-    verbose=True,  # Keep agent verbose for debugging, we'll adjust Crew verbose
+    verbose=True,
     allow_delegation=False,
     llm=llm
 )
@@ -77,7 +77,7 @@ quality_critic_agent = Agent(
     role='Reviews whether the ticket details produced by ticket_creator_agent are really present in the feedback record',
     goal='Ensure ticket details present in the feedback record',
     backstory='Expert in reviewing ticket details from customer feedback record',
-    verbose=True,  # Keep agent verbose for debugging, we'll adjust Crew verbose
+    verbose=True,
     allow_delegation=False,
     llm=llm
 )
@@ -94,8 +94,8 @@ csv_read_task = Task(
 )
 
 feedback_classifier_task = Task(
-    description="identify the category of the feedback.",
-    expected_output="A string containing one of - bug, feature request, praise, complaint, spam.",
+    description="identify the category of the feedback along with confidence_score.",
+    expected_output="A string containing one of - bug, feature request, praise, complaint, spam and confidence_score.",
     agent=feedback_classifier_agent
 )
 
@@ -113,7 +113,7 @@ feature_extractor_task = Task(
 
 ticket_creator_task = Task(
     description="Generates structured tickets and logs them to output CSV file named {out_file}.",
-    expected_output="A list containing the ticket information.",
+    expected_output="A file containing the ticket information.",
     agent=ticket_creactor_agent,
     tools=[ticket_writer_tool]
 )
@@ -156,8 +156,16 @@ with st.sidebar:
         feedback_input_types
     )
 
+    if selected_type == "support_emails.csv":
+        st.text("30 records. Enter numbers between 0 and 30")
+    else:
+        st.text("80 records. Enter numbers between 0 and 80")
+
     start_rec_no = st.number_input("Enter start record number:", format="%.0f")
     end_rec_no = st.number_input("Enter end record number:", format="%.0f")
+
+    if start_rec_no != 0:
+        start_rec_no -= 1
 
     st.write("Entered numbers are:", int(start_rec_no), " and ", int(end_rec_no), " respectively.")
 
@@ -197,14 +205,15 @@ with col1:
                 'end_rec_no': end_rec_no,
                 'out_file': str(output_file_name)
             }
-#            result = FoodCatalyst().crew().kickoff(inputs=inputs)
-
+            tdf = pd.read_csv(selected_type)
+            st.text("Selected records are: ")
+            st.dataframe(tdf.iloc[int(start_rec_no):int(end_rec_no), :])
             result = crew.kickoff(inputs=input_params)
             print("\n📊 Ticket Creation Report:\n")
             print(result)
 
         else:
-            st.info("Click **Go** to view processed feedback data.")
+            st.info("Click **Go** to view feedback data being processed.")
 
 # -----------------------
 # Panel 2 – Logs / Text Output
@@ -215,32 +224,10 @@ with col2:
 
     with panel_2:
         if run_clicked:
-            log_text = f"""
-            Processing started...
-            Source (Type 1): {selected_type}
-
-            Steps completed:
-            - Loaded feedback files
-            - Applied filters
-            - Aggregated results
-            - Generated output file
-
-            Processing completed successfully.
-            """
-            st.text_area(
-                label="Logs",
-                value=log_text,
-                height=340
-            )
-            # Mock processed dataframe
-            df = pd.DataFrame({
-                "Feedback ID": range(1, 11),
-                "Category": ["Positive", "Negative", "Neutral"] * 3 + ["Positive"],
-                "Source": [selected_type] * 10,
-                "Comment": [f"Feedback comment {i}" for i in range(1, 11)]
-            })
-
-            st.dataframe(df, use_container_width=True)
+            with st.status("Agent is working...", expanded=True) as status:
+                st.write(result)
+                status.update(label="Done!", state="complete", expanded=False)
+            st.markdown(result)
 
         else:
             st.info("Logs will appear here after processing.")
@@ -250,11 +237,13 @@ with col2:
 # -----------------------
 if run_clicked:
     # Convert dataframe to CSV for download
+
     csv_buffer = StringIO()
+    df = pd.read_csv(output_file_name)
     df.to_csv(csv_buffer, index=False)
 
     st.download_button(
-        label="Download Output File",
+        label="Download Generated Tickets File",
         data=csv_buffer.getvalue(),
         file_name=output_file_name,
         mime="text/csv"
