@@ -28,6 +28,14 @@ class TicketWriterTool(BaseTool):
         df = pd.read_json(json_tkt)
         df.to_csv(out_file)
 
+class MetricsWriterTool(BaseTool):
+    name: str = "MetricsWriterTool"
+    description: str = "write the metrics details received in string format into a text file"
+    def _run(self, texte: str, out_file: str):
+        with open(out_file, 'w', encoding='utf-8') as f:
+            f.write(texte)
+
+
 csv_reader_agent = Agent(
     role='Read CSV data',
     goal='Reads and parses feedback data from CSV files',
@@ -38,7 +46,8 @@ csv_reader_agent = Agent(
 )
 
 feedback_classifier_agent = Agent(
-    role='Classify feedback into one of the five categories: bug, feature request, praise, complaint and spam along with confidence_score for the identified class',
+    role='Classify feedback into one of the five categories: bug, feature request, praise, complaint and spam along with confidence_score for the identified class; '
+         'if confidence_score is less than 0.9 for any record, take human input on which category to use only for that record',
     goal='Categorize feedback into given categories and identify confidence_score',
     backstory='Expert in understanding customer issues from their feedback and categorizing those',
     verbose=True,
@@ -74,9 +83,9 @@ ticket_creactor_agent = Agent(
 )
 
 quality_critic_agent = Agent(
-    role='Reviews whether the ticket details produced by ticket_creator_agent are really present in the feedback record',
-    goal='Ensure ticket details present in the feedback record',
-    backstory='Expert in reviewing ticket details from customer feedback record',
+    role='Reviews whether the ticket details produced by ticket_creator_agent are really present in the feedback record and output quality metrics',
+    goal='Ensure ticket details present in the feedback record and evaluate overall crew performance',
+    backstory='Expert in reviewing ticket details from customer feedback record and calculate metrics',
     verbose=True,
     allow_delegation=False,
     llm=llm
@@ -84,18 +93,20 @@ quality_critic_agent = Agent(
 
 csv_reader_tool = CSVReaderTool()
 ticket_writer_tool = TicketWriterTool()
+metrics_writer_tool = MetricsWriterTool()
 #finance_tool = YahooFinanceTool()
 
 csv_read_task = Task(
-    description="read the {input_file} file, and return records between {start_rec_no} and {end_rec_no}.",
+    description="read the {input_file} file, and return records between {st_rec_no} and {end_rec_no}.",
     expected_output="JSON formatted records.",
     agent=csv_reader_agent,
     tools=[csv_reader_tool]
 )
 
 feedback_classifier_task = Task(
-    description="identify the category of the feedback along with confidence_score.",
+    description="identify the category of the feedback along with confidence_score; if confidence_score is less than 0.9 for any record present it to human and ask which category to use for that record.",
     expected_output="A string containing one of - bug, feature request, praise, complaint, spam and confidence_score.",
+    human_input=True,
     agent=feedback_classifier_agent
 )
 
@@ -120,8 +131,9 @@ ticket_creator_task = Task(
 
 quality_critic_task = Task(
     description="Reviews generated tickets against feedback record and finds discrepancies.",
-    expected_output="A string containing review comment.",
-    agent=quality_critic_agent
+    expected_output="A file named 'metrics.txt' giving total number of records processed, average confidence_score, number of records with discrepancies and overall comment.",
+    agent=quality_critic_agent,
+    tools=[metrics_writer_tool]
 )
 
 # -----------------------
@@ -163,11 +175,12 @@ with st.sidebar:
 
     start_rec_no = st.number_input("Enter start record number:", format="%.0f")
     end_rec_no = st.number_input("Enter end record number:", format="%.0f")
+    st_rec_no = 0
 
     if start_rec_no != 0:
-        start_rec_no -= 1
+        st_rec_no = int(start_rec_no) - 1
 
-    st.write("Entered numbers are:", int(start_rec_no), " and ", int(end_rec_no), " respectively.")
+    st.write("Records numbers to be used are: ", st_rec_no+1, " and ", int(end_rec_no), " respectively.")
 
     st.divider()
 
@@ -201,13 +214,13 @@ with col1:
 
             input_params = {
                 'input_file': selected_type,
-                'start_rec_no': start_rec_no,
-                'end_rec_no': end_rec_no,
+                'st_rec_no': st_rec_no,
+                'end_rec_no': int(end_rec_no),
                 'out_file': str(output_file_name)
             }
             tdf = pd.read_csv(selected_type)
             st.text("Selected records are: ")
-            st.dataframe(tdf.iloc[int(start_rec_no):int(end_rec_no), :])
+            st.dataframe(tdf.iloc[int(st_rec_no):int(end_rec_no), :])
             result = crew.kickoff(inputs=input_params)
             print("\n📊 Ticket Creation Report:\n")
             print(result)
