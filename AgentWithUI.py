@@ -47,7 +47,7 @@ csv_reader_agent = Agent(
 
 feedback_classifier_agent = Agent(
     role='Classify feedback into one of the five categories: bug, feature request, praise, complaint and spam along with confidence_score for the identified class; '
-         'if confidence_score is less than 0.9 for any record, take human input on which category to use only for that record',
+         'if confidence_score is less than {c_score} for any record, take and use human input on which category to use only for that record',
     goal='Categorize feedback into given categories and identify confidence_score',
     backstory='Expert in understanding customer issues from their feedback and categorizing those',
     verbose=True,
@@ -65,7 +65,7 @@ bug_analysis_agent = Agent(
 )
 
 feature_extractor_agent = Agent(
-    role='Identifies new feature requests and estimates user impact/demand from user feedback - and output those in json format',
+    role='Identifies new feature requests and finds user impact/demand from user feedback - and output those in json format',
     goal='Identify new feature requests from feedback text provided the feedback is classified as feature request',
     backstory='Expert in identifying feature requests from customer feedback',
     verbose=True,
@@ -75,7 +75,7 @@ feature_extractor_agent = Agent(
 
 ticket_creactor_agent = Agent(
     role='Creates a list output containing the source_id, source_type, category, priority, technical_details, suggested_title and confidence_score using the outputs from other agents',
-    goal='Create ticket details from feedback text and write those into {out_file}',
+    goal='Create ticket details from feedback text and write those into {out_file} only once',
     backstory='Expert in creating ticket details from customer feedback',
     verbose=True,
     allow_delegation=False,
@@ -104,7 +104,7 @@ csv_read_task = Task(
 )
 
 feedback_classifier_task = Task(
-    description="identify the category of the feedback along with confidence_score; if confidence_score is less than 0.9 for any record present it to human and ask which category to use for that record.",
+    description="identify the category of the feedback along with confidence_score; if confidence_score is less than {c_score} for any record present it to human and ask which category to use for that record and use that for final output.",
     expected_output="A string containing one of - bug, feature request, praise, complaint, spam and confidence_score.",
     human_input=True,
     agent=feedback_classifier_agent
@@ -118,12 +118,12 @@ bug_analysis_task = Task(
 
 feature_extractor_task = Task(
     description="extracts features requested from a feedback, provided it is categorized as a feature request by feedback_classifier_task.",
-    expected_output="A list containing identified features.",
+    expected_output="A json containing identified features.",
     agent=feature_extractor_agent
 )
 
 ticket_creator_task = Task(
-    description="Generates structured tickets and logs them to output CSV file named {out_file}.",
+    description="Generates structured tickets and logs them to output CSV file named {out_file} - try only one time.",
     expected_output="A file containing the ticket information.",
     agent=ticket_creactor_agent,
     tools=[ticket_writer_tool]
@@ -143,12 +143,8 @@ st.set_page_config(
     page_title="Feedback Processor",
     layout="wide")
 
-st.title("Feedback Processing Dashboard")
+st.title("Feedback Processing Dashboard (B.Ghoshal)")
 
-# -----------------------
-# Mock data sources
-# (replace with os.listdir or DB queries in real app)
-# -----------------------
 feedback_input_types = [
     "app_feedback_samples.csv",
     "support_emails.csv"
@@ -180,14 +176,16 @@ with st.sidebar:
     if start_rec_no != 0:
         st_rec_no = int(start_rec_no) - 1
 
-    st.write("Records numbers to be used are: ", st_rec_no+1, " and ", int(end_rec_no), " respectively.")
+    c_score = st.number_input("Enter confidence_score to be used:", format="%0.2f")
+
+    st.write("Records numbers to be used are: ", st_rec_no+1, " and ", int(end_rec_no), " and conf. score to be used: ", c_score)
 
     st.divider()
 
     # Output file name
     output_file_name = st.text_input(
         "Output File Name",
-        value="processed_tickets.csv"
+        value="generated_tickets.csv"
     )
 
     run_clicked = st.button("Go", type="primary")
@@ -207,7 +205,7 @@ with col1:
     with panel_1:
         if run_clicked:
             crew = Crew(
-            agents=[csv_reader_agent,feedback_classifier_agent, bug_analysis_agent, feature_extractor_agent,ticket_creactor_agent,quality_critic_agent],
+            agents=[csv_reader_agent,feedback_classifier_agent, bug_analysis_agent, feature_extractor_agent, ticket_creactor_agent, quality_critic_agent],
             tasks=[csv_read_task, feedback_classifier_task, bug_analysis_task, feature_extractor_task, ticket_creator_task, quality_critic_task],
             verbose=False  # Set to False to reduce rich console output and avoid RecursionError
             )
@@ -216,6 +214,7 @@ with col1:
                 'input_file': selected_type,
                 'st_rec_no': st_rec_no,
                 'end_rec_no': int(end_rec_no),
+                'c_score': c_score,
                 'out_file': str(output_file_name)
             }
             tdf = pd.read_csv(selected_type)
@@ -242,6 +241,8 @@ with col2:
                 status.update(label="Done!", state="complete", expanded=False)
             st.markdown(result)
 
+            with open('processing_log.txt', 'w') as f:
+                f.write(str(result.tasks_output)+str(result.token_usage))
         else:
             st.info("Logs will appear here after processing.")
 
